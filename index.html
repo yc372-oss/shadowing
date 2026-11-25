@@ -42,7 +42,7 @@ button:hover{filter:brightness(.96)}.b-rec{background:#ff5a6e;color:#fff}.b-rec.
   <button class="b-all" id="playAll">▶ 全篇聽 Listen all</button><button id="allZh">中文 全部</button>
   <span class="prog">完成 <b id="done">0</b> / <span id="tot">10</span> 句 <small>(80 分以上)</small></span>
 </div>
-<p class="tip">① 按 🔊 聽 → ② 按 🎤 跟著唸（唸完會自動停）→ ③ AI 馬上告訴你哪些字唸對（綠色）、哪些要再練（紅色）→ ▶ 聽聽自己的錄音。每一次都會記錄成學習歷程。</p>
+<p class="tip">🎧 你的錄音會存給老師聽。① 按 🔊 聽 → ② 按 🎤 跟著唸（唸完會自動停）→ ③ AI 馬上告訴你哪些字唸對（綠色）、哪些要再練（紅色）→ ▶ 聽聽自己的錄音。每一次都會記錄成學習歷程。</p>
 <div id="list"></div>
 </div>
 <script>
@@ -105,30 +105,33 @@ function record(i,btn){if(!REC){warn('⚠️ 這個瀏覽器不能做發音檢�
   res.innerHTML='⏳ 準備麥克風…';btn.classList.add('on');btn.textContent='⏺ 錄音中… 按這裡結束';btn.onclick=stop;
   r.onstart=()=>{started=true;res.innerHTML='🔴 <b>現在請開始唸</b>（唸完停一下就會自動結束）';arm();tMax=setTimeout(stop,20000);
     if(!NOREC&&navigator.mediaDevices&&window.MediaRecorder){navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}).then(st=>{if(ended){st.getTracks().forEach(t=>t.stop());return}
-      stream=st;usedRec=true;mr=new MediaRecorder(st);mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}).catch(()=>{})}};
+      stream=st;usedRec=true;try{mr=new MediaRecorder(st,{audioBitsPerSecond:32000})}catch(_){mr=new MediaRecorder(st)}mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}).catch(()=>{})}};
   r.onresult=ev=>{got=true;const R=[...ev.results];lastTxt=R.map(x=>x[0].transcript).join(' ').replace(/\s+/g,' ').trim();res.innerHTML='🎧 '+lastTxt.replace(/</g,'&lt;');
     const head=R.slice(0,-1).map(x=>x[0].transcript).join(' '),last=R[R.length-1];alts=[];for(let k=0;k<last.length;k++)alts.push((head+' '+last[k].transcript).trim());arm()};
   r.onerror=ev=>{const m={'not-allowed':'🎤 語音辨識沒有權限使用麥克風。iPhone：設定 → Safari → 麥克風 →「允許」；或按網址列左邊的圖示允許麥克風，再按一次 🎤。','audio-capture':'🎤 麥克風被別的程式占用或找不到。請關掉其他正在用麥克風的 App（LINE 通話、錄音、視訊），再試一次。','network':'🌐 語音辨識需要網路，請確認網路後再試。','service-not-allowed':'🎤 這個瀏覽器不能使用語音辨識。iPhone 請到 設定 → Siri → 開啟「聽寫」；其他手機請改用 Chrome。'}[ev.error];
     if(m)warn(m+' <small>（'+ev.error+'）</small>')};
   r.onend=()=>{ended=true;clearTimeout(tSil);clearTimeout(tMax);btn.classList.remove('on');btn.textContent='🎤 再唸一次';btn.onclick=null;
-    if(mr&&mr.state!=='inactive'){mr.onstop=()=>{audio[i]=URL.createObjectURL(new Blob(chunks,{type:mr.mimeType||'audio/mp4'}));document.querySelector(`[data-me="${i}"]`).style.display=''};mr.stop()}
-    if(stream)setTimeout(()=>stream.getTracks().forEach(t=>t.stop()),300);
     busy=false;const list=alts.length?alts:(lastTxt?[lastTxt]:[]);
+    if(mr&&mr.state!=='inactive'){mr.onstop=()=>{const mt=mr.mimeType||'audio/mp4',bl=new Blob(chunks,{type:mt});audio[i]=URL.createObjectURL(bl);document.querySelector(`[data-me="${i}"]`).style.display='';
+        if(stream)stream.getTracks().forEach(t=>t.stop());
+        if(list.length){const fr=new FileReader();fr.onload=()=>grade(i,list,String(fr.result).split(',')[1]||'',mt);fr.onerror=()=>grade(i,list);fr.readAsDataURL(bl)}};
+      try{mr.stop()}catch(_){if(list.length)grade(i,list)}if(list.length)return}
+    else if(stream)setTimeout(()=>stream.getTracks().forEach(t=>t.stop()),300);
     if(list.length){grade(i,list);return}
     if(usedRec&&!NOREC){NOREC=true;try{localStorage.setItem('shNoRec','1')}catch(_){}
       res.innerHTML='🔧 這支手機不能同時「錄音」和「AI 聽發音」，已自動改成只做 AI 發音檢查（不保留錄音）。<b>請再按一次 🎤 唸一次。</b>';return}
     res.innerHTML='😶 AI 沒有聽到你的聲音。請：① 看到 🔴「現在請開始唸」再開口 ② 手機拿近一點、大聲一點 ③ 關掉其他用麥克風的 App（例如 LINE 通話），再試一次。'};
   try{r.start()}catch(err){busy=false;btn.classList.remove('on');btn.textContent='🎤 跟著唸';btn.onclick=null;res.innerHTML='⚠️ 麥克風還沒準備好，請再按一次 🎤。'}}
-function grade(i,alts){const toks=tokens(SENTS[i][0]).filter(t=>t.key);const tk=toks.map(t=>t.key);
+function grade(i,alts,au,mt){const toks=tokens(SENTS[i][0]).filter(t=>t.key);const tk=toks.map(t=>t.key);
   let bestA=null;for(const h of alts){const ok=align(tk,norm(h));const sc=Math.round(ok.filter(Boolean).length*100/tk.length);if(!bestA||sc>bestA.sc)bestA={sc,ok,h}}
   const spans=[...$('e'+i).querySelectorAll('.w')];let k=0;spans.forEach(s=>{const key=norm(s.textContent).join('');s.className='w';if(!key)return;s.classList.add(bestA.ok[k]?'ok':'bad');k++});
   const sc=bestA.sc,cls=sc>=80?'s-hi':sc>=60?'s-mid':'s-lo',msg=sc>=90?'🌟 Excellent! 發音很棒！':sc>=80?'👍 Good job! 很好！':sc>=60?'💪 不錯，紅色的字再練一下':'🔁 慢一點、清楚一點，再試一次';
   $('r'+i).innerHTML=`<span class="score ${cls}">${sc}</span>${msg}<div class="heard">AI 聽到：「${bestA.h.trim().replace(/</g,'&lt;')}」<span class="saved" id="sv${i}"></span></div>`;
   best[i]=Math.max(best[i]||0,sc);$('c'+i).classList.toggle('pass',best[i]>=80);$('done').textContent=Object.values(best).filter(x=>x>=80).length;
-  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);PEND[id]={src:'shadow',id,i,score:sc,heard:bestA.h.trim().slice(0,300)};savePend();$('sv'+i).dataset.id=id;$('sv'+i).textContent=' ⏳ 存檔中…';sendPend();
+  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);PEND[id]={src:'shadow',id,i,score:sc,heard:bestA.h.trim().slice(0,300),audio:au||'',mime:mt||''};savePend();$('sv'+i).dataset.id=id;$('sv'+i).textContent=' ⏳ 存檔中…';sendPend();
   setTimeout(()=>{const e=$('sv'+i);if(e&&e.dataset.id===id&&PEND[id])e.innerHTML=' ⚠️ 還沒存到：請按上面的「↩ 回到講義」，回到講義後會自動補存。'},8000)}
 let PEND={};try{PEND=JSON.parse(localStorage.getItem('shPend')||'{}')}catch(_){}
-function savePend(){try{localStorage.setItem('shPend',JSON.stringify(PEND))}catch(_){}}
+function savePend(){try{const o={};for(const k in PEND)o[k]=Object.assign({},PEND[k],{audio:''});localStorage.setItem('shPend',JSON.stringify(o))}catch(_){}}
 function sendPend(){try{if(window.opener&&!window.opener.closed)Object.values(PEND).forEach(m=>window.opener.postMessage(m,'*'))}catch(_){}}
 setInterval(sendPend,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)sendPend()});window.addEventListener('focus',sendPend);
 window.addEventListener('message',e=>{const d=e.data||{};if(d.src==='shadowAck'){if(d.ok&&d.id){delete PEND[d.id];savePend()}const e=$('sv'+d.i);if(e&&(!d.id||e.dataset.id===d.id))e.textContent=d.ok?' ✅ 已記錄':' ⚠️ 沒有記錄到，請再唸一次';}
@@ -140,5 +143,6 @@ $('backBtn').onclick=()=>{try{if(window.opener&&!window.opener.closed){window.op
 window.addEventListener('load',()=>{if(!window.opener){const w=document.getElementById('warn');w.innerHTML='<div class="warn">📌 這個練習室要從 <b>Unit 4 講義 → 第 5 區「🎤 打開跟讀練習室」</b> 按鈕打開，成績才會記錄到你的學校帳號。直接打開也可以練習，但不會記錄。</div>'+w.innerHTML}});
 </script>
 </body></html>
+
 
 
