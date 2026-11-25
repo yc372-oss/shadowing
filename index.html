@@ -77,13 +77,13 @@ $('tot').textContent=SENTS.length;
 $('list').innerHTML=SENTS.map(([e,z],i)=>`<div class="card" id="c${i}"><div class="top"><span class="num">${i+1}</span><div class="en" id="e${i}">${tokens(e).map((t,k)=>`<span class="w" data-k="${k}">${t.raw}</span>`).join(' ')}<div class="zh">${z}</div></div><button class="zb" data-z="${i}">中</button></div>
 <div class="btns"><button class="b-play" data-p="${i}">🔊 聽</button><button class="b-rec" data-r="${i}">🎤 跟著唸</button><button data-me="${i}" style="display:none">▶ 聽我自己</button></div>
 <div class="res" id="r${i}"></div></div>`).join('');
-const audio={};
+const audio={};const PL=new Audio();PL.setAttribute('playsinline','');
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.z!=null)$('c'+b.dataset.z).classList.toggle('zon');
   if(b.id==='playAll'){playAll(b);return}
   if(b.id==='allZh'){const on=!document.querySelector('.card.zon');document.querySelectorAll('.card').forEach(c=>c.classList.toggle('zon',on))}
   if(b.dataset.p!=null){focusCard(+b.dataset.p);speak(SENTS[+b.dataset.p][0])}
-  if(b.dataset.me!=null){const a=audio[b.dataset.me];if(a)new Audio(a).play()}
+  if(b.dataset.me!=null){const a=audio[b.dataset.me];if(a){if(S)S.cancel();PL.pause();PL.src=a;PL.currentTime=0;PL.play().catch(()=>{})}}
   if(b.dataset.r!=null)record(+b.dataset.r,b)});
 let allRun=0;
 async function playAll(b){if(!S)return;if(b.dataset.on){allRun++;S.cancel();b.dataset.on='';b.textContent='▶ 全篇聽 Listen all';document.querySelectorAll('.card.reading').forEach(c=>c.classList.remove('reading'));return}
@@ -96,19 +96,19 @@ function focusCard(i){document.querySelectorAll('.card.now').forEach(c=>c.classL
 async function record(i,btn){if(!REC){warn('⚠️ 這個瀏覽器不能做發音檢查，請改用 Chrome 或 Edge。');return}
   if(busy)return;busy=true;focusCard(i);if(S)S.cancel();
   let mr=null,chunks=[],stream=null;
-  try{stream=await navigator.mediaDevices.getUserMedia({audio:true});mr=new MediaRecorder(stream);mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}catch(err){const n=err&&err.name||'';if(n==='NotFoundError'){warn('🎤 找不到麥克風：這台電腦沒有接麥克風（或耳機麥克風沒插好）。請接上麥克風，或改用手機／筆電。<small>（'+n+'）</small>');busy=false;return}
+  try{PL.pause();stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});mr=new MediaRecorder(stream);mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}catch(err){const n=err&&err.name||'';if(n==='NotFoundError'){warn('🎤 找不到麥克風：這台電腦沒有接麥克風（或耳機麥克風沒插好）。請接上麥克風，或改用手機／筆電。<small>（'+n+'）</small>');busy=false;return}
     if(n==='NotAllowedError'||n==='SecurityError'){warn('🎤 瀏覽器沒有讓這個視窗使用麥克風。請按網址列左邊的圖示 → 麥克風 →「允許」，再按一次 🎤。如果還是不行，請告訴老師。<small>（'+n+': '+(err.message||'')+'）</small>');busy=false;return}}
   const r=new REC();r.lang='en-US';r.interimResults=true;r.maxAlternatives=3;r.continuous=false;
   const res=$('r'+i);res.className='res show';res.innerHTML='🎧 請開始唸…（唸完停一下就會自動結束）';btn.classList.add('on');btn.textContent='⏺ 錄音中… 按這裡結束';
-  let finals=[],stopped=false;btn.onclick=()=>{try{r.stop()}catch(_){}};
-  r.onresult=ev=>{let txt='';for(const x of ev.results){txt+=x[0].transcript+' '}res.innerHTML='🎧 '+txt;
+  let finals=[],stopped=false,lastTxt='';btn.onclick=()=>{try{r.stop()}catch(_){}};
+  r.onresult=ev=>{let txt='';for(const x of ev.results){txt+=x[0].transcript+' '}lastTxt=txt.trim();res.innerHTML='🎧 '+txt;
     finals=[];const last=ev.results[ev.results.length-1];if(last.isFinal)for(let a=0;a<last.length;a++)finals.push([...ev.results].slice(0,-1).map(x=>x[0].transcript).join(' ')+' '+last[a].transcript)};
   r.onerror=ev=>{const m={'not-allowed':'🎤 語音辨識沒有權限使用麥克風。請按網址列左邊的圖示 → 麥克風 →「允許」，再按一次 🎤。','audio-capture':'🎤 找不到麥克風：請接上麥克風，或改用手機／筆電。','network':'🌐 語音辨識需要網路，請確認網路後再試。','service-not-allowed':'🎤 這個瀏覽器不能使用語音辨識，請改用 Chrome 或 Edge。'}[ev.error];
     if(m)warn(m+' <small>（'+ev.error+'）</small>');if(ev.error==='no-speech')res.innerHTML='😶 沒有聽到聲音，請靠近麥克風再試一次。'};
   r.onend=()=>{btn.classList.remove('on');btn.textContent='🎤 再唸一次';btn.onclick=null;
     if(mr&&mr.state!=='inactive'){mr.onstop=()=>{audio[i]=URL.createObjectURL(new Blob(chunks,{type:mr.mimeType||'audio/webm'}));document.querySelector(`[data-me="${i}"]`).style.display=''};mr.stop()}
     if(stream)setTimeout(()=>stream.getTracks().forEach(t=>t.stop()),300);
-    busy=false;if(finals.length)grade(i,finals)};
+    busy=false;if(!finals.length&&lastTxt)finals=[lastTxt];if(finals.length)grade(i,finals);else if(!/沒有聽到/.test(res.textContent))res.innerHTML='😶 沒有聽到你唸的句子，請靠近麥克風、大聲一點再試一次。'};
   try{r.start()}catch(err){busy=false;btn.classList.remove('on');btn.textContent='🎤 跟著唸'}}
 function grade(i,alts){const toks=tokens(SENTS[i][0]).filter(t=>t.key);const tk=toks.map(t=>t.key);
   let bestA=null;for(const h of alts){const ok=align(tk,norm(h));const sc=Math.round(ok.filter(Boolean).length*100/tk.length);if(!bestA||sc>bestA.sc)bestA={sc,ok,h}}
@@ -116,13 +116,19 @@ function grade(i,alts){const toks=tokens(SENTS[i][0]).filter(t=>t.key);const tk=
   const sc=bestA.sc,cls=sc>=80?'s-hi':sc>=60?'s-mid':'s-lo',msg=sc>=90?'🌟 Excellent! 發音很棒！':sc>=80?'👍 Good job! 很好！':sc>=60?'💪 不錯，紅色的字再練一下':'🔁 慢一點、清楚一點，再試一次';
   $('r'+i).innerHTML=`<span class="score ${cls}">${sc}</span>${msg}<div class="heard">AI 聽到：「${bestA.h.trim().replace(/</g,'&lt;')}」<span class="saved" id="sv${i}"></span></div>`;
   best[i]=Math.max(best[i]||0,sc);$('c'+i).classList.toggle('pass',best[i]>=80);$('done').textContent=Object.values(best).filter(x=>x>=80).length;
-  try{if(window.opener)window.opener.postMessage({src:'shadow',i,score:sc,heard:bestA.h.trim().slice(0,300)},'*')}catch(_){}}
-window.addEventListener('message',e=>{const d=e.data||{};if(d.src==='shadowAck'&&$('sv'+d.i))$('sv'+d.i).textContent=d.ok?' ✅ 已記錄':' ⚠️ 沒有記錄到';
+  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,6);PEND[id]={src:'shadow',id,i,score:sc,heard:bestA.h.trim().slice(0,300)};savePend();$('sv'+i).dataset.id=id;$('sv'+i).textContent=' ⏳ 存檔中…';sendPend();
+  setTimeout(()=>{const e=$('sv'+i);if(e&&e.dataset.id===id&&PEND[id])e.innerHTML=' ⚠️ 還沒存到：請按上面的「↩ 回到講義」，回到講義後會自動補存。'},8000)}
+let PEND={};try{PEND=JSON.parse(localStorage.getItem('shPend')||'{}')}catch(_){}
+function savePend(){try{localStorage.setItem('shPend',JSON.stringify(PEND))}catch(_){}}
+function sendPend(){try{if(window.opener&&!window.opener.closed)Object.values(PEND).forEach(m=>window.opener.postMessage(m,'*'))}catch(_){}}
+setInterval(sendPend,5000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)sendPend()});window.addEventListener('focus',sendPend);
+window.addEventListener('message',e=>{const d=e.data||{};if(d.src==='shadowAck'){if(d.ok&&d.id){delete PEND[d.id];savePend()}const e=$('sv'+d.i);if(e&&(!d.id||e.dataset.id===d.id))e.textContent=d.ok?' ✅ 已記錄':' ⚠️ 沒有記錄到，請再唸一次';}
   if(d.src==='shadowBest'&&d.teacher)$('hubBtn').classList.add('on');
   if(d.src==='shadowBest'&&d.best){Object.entries(d.best).forEach(([i,s])=>{best[i]=s;const c=$('c'+i);if(c)c.classList.toggle('pass',s>=80)});$('done').textContent=Object.values(best).filter(x=>x>=80).length}});
-try{if(window.opener)window.opener.postMessage({src:'shadowHello'},'*')}catch(_){}
+try{if(window.opener)window.opener.postMessage({src:'shadowHello'},'*')}catch(_){}sendPend();
 $('backBtn').onclick=()=>{try{if(window.opener&&!window.opener.closed){window.opener.focus();window.close();return}}catch(_){}history.back()};
 </script><script>/* 沒有從講義打開時提醒 */
 window.addEventListener('load',()=>{if(!window.opener){const w=document.getElementById('warn');w.innerHTML='<div class="warn">📌 這個練習室要從 <b>Unit 4 講義 → 第 5 區「🎤 打開跟讀練習室」</b> 按鈕打開，成績才會記錄到你的學校帳號。直接打開也可以練習，但不會記錄。</div>'+w.innerHTML}});
 </script>
 </body></html>
+
