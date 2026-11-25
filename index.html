@@ -93,23 +93,32 @@ async function playAll(b){if(!S)return;if(b.dataset.on){allRun++;S.cancel();b.da
     await speak(SENTS[i][0]);if(id!==allRun)return;await new Promise(r=>setTimeout(r,600))}
   if(id===allRun){b.dataset.on='';b.textContent='▶ 全篇聽 Listen all';document.querySelectorAll('.card.reading').forEach(x=>x.classList.remove('reading'))}}
 function focusCard(i){document.querySelectorAll('.card.now').forEach(c=>c.classList.remove('now'));$('c'+i).classList.add('now')}
-async function record(i,btn){if(!REC){warn('⚠️ 這個瀏覽器不能做發音檢查，請改用 Chrome 或 Edge。');return}
-  if(busy)return;busy=true;focusCard(i);if(S)S.cancel();
-  let mr=null,chunks=[],stream=null;
-  try{PL.pause();stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});mr=new MediaRecorder(stream);mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}catch(err){const n=err&&err.name||'';if(n==='NotFoundError'){warn('🎤 找不到麥克風：這台電腦沒有接麥克風（或耳機麥克風沒插好）。請接上麥克風，或改用手機／筆電。<small>（'+n+'）</small>');busy=false;return}
-    if(n==='NotAllowedError'||n==='SecurityError'){warn('🎤 瀏覽器沒有讓這個視窗使用麥克風。請按網址列左邊的圖示 → 麥克風 →「允許」，再按一次 🎤。如果還是不行，請告訴老師。<small>（'+n+': '+(err.message||'')+'）</small>');busy=false;return}}
-  const r=new REC();r.lang='en-US';r.interimResults=true;r.maxAlternatives=3;r.continuous=false;
-  const res=$('r'+i);res.className='res show';res.innerHTML='🎧 請開始唸…（唸完停一下就會自動結束）';btn.classList.add('on');btn.textContent='⏺ 錄音中… 按這裡結束';
-  let finals=[],stopped=false,lastTxt='';btn.onclick=()=>{try{r.stop()}catch(_){}};
-  r.onresult=ev=>{let txt='';for(const x of ev.results){txt+=x[0].transcript+' '}lastTxt=txt.trim();res.innerHTML='🎧 '+txt;
-    finals=[];const last=ev.results[ev.results.length-1];if(last.isFinal)for(let a=0;a<last.length;a++)finals.push([...ev.results].slice(0,-1).map(x=>x[0].transcript).join(' ')+' '+last[a].transcript)};
-  r.onerror=ev=>{const m={'not-allowed':'🎤 語音辨識沒有權限使用麥克風。請按網址列左邊的圖示 → 麥克風 →「允許」，再按一次 🎤。','audio-capture':'🎤 找不到麥克風：請接上麥克風，或改用手機／筆電。','network':'🌐 語音辨識需要網路，請確認網路後再試。','service-not-allowed':'🎤 這個瀏覽器不能使用語音辨識，請改用 Chrome 或 Edge。'}[ev.error];
-    if(m)warn(m+' <small>（'+ev.error+'）</small>');if(ev.error==='no-speech')res.innerHTML='😶 沒有聽到聲音，請靠近麥克風再試一次。'};
-  r.onend=()=>{btn.classList.remove('on');btn.textContent='🎤 再唸一次';btn.onclick=null;
-    if(mr&&mr.state!=='inactive'){mr.onstop=()=>{audio[i]=URL.createObjectURL(new Blob(chunks,{type:mr.mimeType||'audio/webm'}));document.querySelector(`[data-me="${i}"]`).style.display=''};mr.stop()}
+let NOREC=false;try{NOREC=localStorage.getItem('shNoRec')==='1'}catch(_){}
+function record(i,btn){if(!REC){warn('⚠️ 這個瀏覽器不能做發音檢查，請改用 Chrome 或 Edge。');return}
+  if(busy)return;busy=true;focusCard(i);if(S)S.cancel();PL.pause();
+  const res=$('r'+i);res.className='res show';
+  /* 先啟動語音辨識（iPhone 要在按下的當下啟動，並讓辨識先拿到麥克風） */
+  const r=new REC();r.lang='en-US';r.interimResults=true;r.maxAlternatives=3;r.continuous=true;
+  let segs=[],alts=[],lastTxt='',got=false,started=false,mr=null,chunks=[],stream=null,usedRec=false,tSil=null,tMax=null,ended=false;
+  const stop=()=>{try{r.stop()}catch(_){}};
+  const arm=()=>{clearTimeout(tSil);tSil=setTimeout(stop,got?1800:9000)};
+  res.innerHTML='⏳ 準備麥克風…';btn.classList.add('on');btn.textContent='⏺ 錄音中… 按這裡結束';btn.onclick=stop;
+  r.onstart=()=>{started=true;res.innerHTML='🔴 <b>現在請開始唸</b>（唸完停一下就會自動結束）';arm();tMax=setTimeout(stop,20000);
+    if(!NOREC&&navigator.mediaDevices&&window.MediaRecorder){navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}).then(st=>{if(ended){st.getTracks().forEach(t=>t.stop());return}
+      stream=st;usedRec=true;mr=new MediaRecorder(st);mr.ondataavailable=ev=>chunks.push(ev.data);mr.start()}).catch(()=>{})}};
+  r.onresult=ev=>{got=true;const R=[...ev.results];lastTxt=R.map(x=>x[0].transcript).join(' ').replace(/\s+/g,' ').trim();res.innerHTML='🎧 '+lastTxt.replace(/</g,'&lt;');
+    const head=R.slice(0,-1).map(x=>x[0].transcript).join(' '),last=R[R.length-1];alts=[];for(let k=0;k<last.length;k++)alts.push((head+' '+last[k].transcript).trim());arm()};
+  r.onerror=ev=>{const m={'not-allowed':'🎤 語音辨識沒有權限使用麥克風。iPhone：設定 → Safari → 麥克風 →「允許」；或按網址列左邊的圖示允許麥克風，再按一次 🎤。','audio-capture':'🎤 麥克風被別的程式占用或找不到。請關掉其他正在用麥克風的 App（LINE 通話、錄音、視訊），再試一次。','network':'🌐 語音辨識需要網路，請確認網路後再試。','service-not-allowed':'🎤 這個瀏覽器不能使用語音辨識。iPhone 請到 設定 → Siri → 開啟「聽寫」；其他手機請改用 Chrome。'}[ev.error];
+    if(m)warn(m+' <small>（'+ev.error+'）</small>')};
+  r.onend=()=>{ended=true;clearTimeout(tSil);clearTimeout(tMax);btn.classList.remove('on');btn.textContent='🎤 再唸一次';btn.onclick=null;
+    if(mr&&mr.state!=='inactive'){mr.onstop=()=>{audio[i]=URL.createObjectURL(new Blob(chunks,{type:mr.mimeType||'audio/mp4'}));document.querySelector(`[data-me="${i}"]`).style.display=''};mr.stop()}
     if(stream)setTimeout(()=>stream.getTracks().forEach(t=>t.stop()),300);
-    busy=false;if(!finals.length&&lastTxt)finals=[lastTxt];if(finals.length)grade(i,finals);else if(!/沒有聽到/.test(res.textContent))res.innerHTML='😶 沒有聽到你唸的句子，請靠近麥克風、大聲一點再試一次。'};
-  try{r.start()}catch(err){busy=false;btn.classList.remove('on');btn.textContent='🎤 跟著唸'}}
+    busy=false;const list=alts.length?alts:(lastTxt?[lastTxt]:[]);
+    if(list.length){grade(i,list);return}
+    if(usedRec&&!NOREC){NOREC=true;try{localStorage.setItem('shNoRec','1')}catch(_){}
+      res.innerHTML='🔧 這支手機不能同時「錄音」和「AI 聽發音」，已自動改成只做 AI 發音檢查（不保留錄音）。<b>請再按一次 🎤 唸一次。</b>';return}
+    res.innerHTML='😶 AI 沒有聽到你的聲音。請：① 看到 🔴「現在請開始唸」再開口 ② 手機拿近一點、大聲一點 ③ 關掉其他用麥克風的 App（例如 LINE 通話），再試一次。'};
+  try{r.start()}catch(err){busy=false;btn.classList.remove('on');btn.textContent='🎤 跟著唸';btn.onclick=null;res.innerHTML='⚠️ 麥克風還沒準備好，請再按一次 🎤。'}}
 function grade(i,alts){const toks=tokens(SENTS[i][0]).filter(t=>t.key);const tk=toks.map(t=>t.key);
   let bestA=null;for(const h of alts){const ok=align(tk,norm(h));const sc=Math.round(ok.filter(Boolean).length*100/tk.length);if(!bestA||sc>bestA.sc)bestA={sc,ok,h}}
   const spans=[...$('e'+i).querySelectorAll('.w')];let k=0;spans.forEach(s=>{const key=norm(s.textContent).join('');s.className='w';if(!key)return;s.classList.add(bestA.ok[k]?'ok':'bad');k++});
@@ -131,4 +140,5 @@ $('backBtn').onclick=()=>{try{if(window.opener&&!window.opener.closed){window.op
 window.addEventListener('load',()=>{if(!window.opener){const w=document.getElementById('warn');w.innerHTML='<div class="warn">📌 這個練習室要從 <b>Unit 4 講義 → 第 5 區「🎤 打開跟讀練習室」</b> 按鈕打開，成績才會記錄到你的學校帳號。直接打開也可以練習，但不會記錄。</div>'+w.innerHTML}});
 </script>
 </body></html>
+
 
